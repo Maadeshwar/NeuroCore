@@ -51,14 +51,14 @@ module unskew_buffer #(
     // Unskewing means delaying row i by (N-1 - i) cycles
     // So that all elements of a column arrive at the same time.
     
-    // We will generate valid_out based on en delayed by (N-1)
-    reg [N-1:0] valid_shift;
+    // We will generate valid_out based on en delayed by (2N-1) (N for array + N-1 for unskew)
+    reg [2*N-1:0] valid_shift;
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) valid_shift <= 0;
-        else if (en) valid_shift <= {valid_shift[N-2:0], 1'b1};
-        else valid_shift <= {valid_shift[N-2:0], 1'b0};
+        else if (en) valid_shift <= {valid_shift[2*N-2:0], 1'b1};
+        else valid_shift <= {valid_shift[2*N-2:0], 1'b0};
     end
-    assign valid_out = valid_shift[N-1];
+    assign valid_out = valid_shift[2*N-2];
 
     genvar i, j;
     generate
