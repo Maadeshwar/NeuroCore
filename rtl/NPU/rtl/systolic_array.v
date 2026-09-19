@@ -1,7 +1,7 @@
 `default_nettype none
 
 module systolic_array #(
-    parameter N = 16,
+    parameter N = 8,
     parameter DATA_WIDTH = 8,
     parameter ACC_WIDTH = 32
 )(
@@ -57,14 +57,18 @@ module systolic_array #(
         end
     endgenerate
 
+`ifdef TRACE_NPU
     always @(posedge clk) begin
         if (en) begin
             if (load_weight) begin
-                $display("ARRAY LOAD: weight_in[0]=%x", weight_in[DATA_WIDTH-1:0]);
+                $display("[%0t] ARRAY LOAD: weight_in[0]=%x", $time, weight_in[DATA_WIDTH-1:0]);
             end else begin
-                $display("ARRAY MAC: act_in[0]=%x psum_in[0]=%x psum_out_row0=%x final_out_row15=%x", act_in[DATA_WIDTH-1:0], psum_in[ACC_WIDTH-1:0], psum_wire[1][0], psum_wire[N][0]);
+                $display("[%0t] ARRAY MAC: act_in[0]=%x psum_in[0]=%x final_out_col0=%x", 
+                         $time, act_in[DATA_WIDTH-1:0], psum_in[ACC_WIDTH-1:0], psum_wire[N][0]);
             end
         end
     end
+`endif
+
 endmodule
 

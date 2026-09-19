@@ -19,12 +19,14 @@ module pe #(
     reg signed [DATA_WIDTH-1:0] weight_reg;
     assign weight_out = weight_reg;
     
-    wire signed [DATA_WIDTH-1:0] s_act = $signed(act_in);
+    // Operand Isolation for General ASIC Power Optimization
+    // Prevents combinatorial toggling in the multiplier when the PE is disabled.
+    wire signed [DATA_WIDTH-1:0] isolated_act = en ? $signed(act_in) : {DATA_WIDTH{1'b0}};
     wire signed [DATA_WIDTH-1:0] s_weight = $signed(weight_reg);
     wire signed [ACC_WIDTH-1:0] s_psum = $signed(psum_in);
 
     // MAC operation
-    wire signed [ACC_WIDTH-1:0] mult_res = s_act * s_weight;
+    wire signed [ACC_WIDTH-1:0] mult_res = isolated_act * s_weight;
     wire signed [ACC_WIDTH-1:0] add_res = mult_res + s_psum;
 
     always @(posedge clk) begin
@@ -40,6 +42,10 @@ module pe #(
             end else begin
                 act_out    <= act_in;
                 psum_out   <= add_res;
+`ifdef TRACE_NPU
+                $display("[%0t] PE MAC: act_in=%x weight=%x psum_in=%x -> psum_out=%x", 
+                         $time, act_in, weight_reg, psum_in, add_res);
+`endif
             end
         end
     end

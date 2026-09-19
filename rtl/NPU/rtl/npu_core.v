@@ -1,7 +1,7 @@
 `default_nettype none
 
 module npu_core #(
-    parameter N = 16,
+    parameter N = 8,
     parameter DATA_WIDTH = 8,
     parameter ACC_WIDTH = 32
 )(
@@ -35,7 +35,7 @@ module npu_core #(
     reg array_en;
     reg array_load;
 
-    // FSM sequential logic (Stage 1)
+    // FSM sequential logic
     always @(posedge clk) begin
         if (!rst_n) begin
             state <= STATE_IDLE;
@@ -46,22 +46,29 @@ module npu_core #(
         end
     end
 
-    // FSM next-state logic (Stage 2)
+    // FSM combinational logic
     always @(*) begin
         next_state = state;
         next_counter = counter;
+        ready = 1'b0;
+        array_en = 1'b0;
+        array_load = 1'b0;
         
         case (state)
             STATE_IDLE: begin
+                ready = 1'b1;
                 next_counter = 7'd0;
                 if (start_load) begin
                     next_state = STATE_LOAD;
                 end else if (start_mac) begin
                     next_state = STATE_MAC;
+                    array_en = 1'b1; // Sample immediately on transition
                 end
             end
             
             STATE_LOAD: begin
+                array_en = 1'b1;
+                array_load = 1'b1;
                 if (counter == (N - 1)) begin
                     next_state = STATE_IDLE;
                 end else begin
@@ -70,38 +77,14 @@ module npu_core #(
             end
             
             STATE_MAC: begin
+                array_en = 1'b1;
+                array_load = 1'b0;
                 if (!start_mac) begin
                     next_state = STATE_IDLE;
                 end
             end
             
             default: next_state = STATE_IDLE;
-        endcase
-    end
-
-    // FSM output logic (Stage 3 - Combinational)
-    always @(*) begin
-        ready = 1'b0;
-        array_en = 1'b0;
-        array_load = 1'b0;
-        
-        case (state)
-            STATE_IDLE: begin
-                ready = 1'b1;
-                if (start_mac) begin
-                    array_en = 1'b1;
-                end
-            end
-            
-            STATE_LOAD: begin
-                array_en = 1'b1;
-                array_load = 1'b1;
-            end
-            
-            STATE_MAC: begin
-                array_en = 1'b1;
-                array_load = 1'b0;
-            end
         endcase
     end
 
