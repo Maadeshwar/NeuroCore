@@ -23,6 +23,8 @@ RTL_SRC = mock_cpu.v \
           ../rtl/accelerator/sram_buffers.v \
           ../rtl/accelerator/npu_command_fifo.v \
           ../rtl/NPU/rtl/npu_core.v \
+          ../rtl/NPU/rtl/axis_npu.v \
+          ../rtl/NPU/rtl/skew_buffers.v \
           ../rtl/NPU/rtl/systolic_array.v \
           ../rtl/NPU/rtl/pe.v
 
