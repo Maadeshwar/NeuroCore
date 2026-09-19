@@ -1,17 +1,17 @@
 # NeuroCore-SoC Verification Makefile
 
-# Toolchains
-CC = riscv32-unknown-elf-gcc
-OBJCOPY = riscv32-unknown-elf-objcopy
-IV = iverilog
-VVP = vvp
+# Toolchains (in WSL)
+CC = riscv64-unknown-elf-gcc
+OBJCOPY = riscv64-unknown-elf-objcopy
+VERILATOR = verilator
 
 # Flags
 CFLAGS = -march=rv32imc -mabi=ilp32 -mcmodel=medany -O2 -ffreestanding -nostdlib
 LDFLAGS = -T link.ld
 
 # Source Files
-RTL_SRC = ../rtl/soc/soc_top.v \
+RTL_SRC = mock_cpu.v \
+          soc_mock_top.v \
           ../rtl/soc/dma_controller.v \
           ../rtl/soc/spi_master.v \
           ../rtl/accelerator/accelerator_top.v \
@@ -24,8 +24,7 @@ RTL_SRC = ../rtl/soc/soc_top.v \
           ../rtl/accelerator/npu_command_fifo.v \
           ../rtl/NPU/rtl/npu_core.v \
           ../rtl/NPU/rtl/systolic_array.v \
-          ../rtl/NPU/rtl/pe.v \
-          ../rtl/CPU/ibex/rtl/*.v # Includes Ibex core files
+          ../rtl/NPU/rtl/pe.v
 
 # Targets
 all: run
@@ -36,11 +35,13 @@ firmware.elf: firmware.c
 firmware.hex: firmware.elf
 	$(OBJCOPY) -O verilog firmware.elf firmware.hex
 
-sim.vvp: soc_tb.v firmware.hex
-	$(IV) -I../rtl/soc -I../rtl/accelerator -I../rtl/NPU/rtl -s soc_tb -o sim.vvp soc_tb.v $(RTL_SRC)
+obj_dir/Vsoc_tb: soc_tb.v sim_main.cpp firmware.hex
+	$(VERILATOR) -Wall --cc --exe --build -Wno-fatal \
+	-I. -I../rtl/soc -I../rtl/accelerator -I../rtl/NPU/rtl -I../rtl/CPU/ibex/rtl \
+	--top-module soc_tb sim_main.cpp soc_tb.v $(RTL_SRC)
 
-run: sim.vvp
-	$(VVP) sim.vvp
+run: obj_dir/Vsoc_tb
+	./obj_dir/Vsoc_tb
 
 clean:
-	rm -f firmware.elf firmware.hex sim.vvp soc_tb.vcd
+	rm -rf firmware.elf firmware.hex obj_dir
