@@ -2,7 +2,13 @@
 
 module soc_top (
     input  wire clk,
-    input  wire rst_n
+    input  wire        rst_n,
+    
+    // SPI Physical Pins
+    output wire        spi_sclk,
+    output wire        spi_mosi,
+    input  wire        spi_miso,
+    output wire        spi_cs_n
 );
 
     // --------------------------------------------------------
@@ -16,6 +22,7 @@ module soc_top (
     // 0x5000_0000 - 0x5000_000F : NPU Config (quant_shift, relu_en)
     // 0x6000_0000 - 0x6000_001F : DMA Controller Config
     // 0x7000_0000 - 0x7000_3FFF : NPU PBUF (Biases)
+    // 0x8000_0000 - 0x8000_000F : High-Speed SPI Master
     // --------------------------------------------------------
 
     // Ibex Signals
@@ -122,7 +129,9 @@ module soc_top (
     wire is_wbuf  = (bus_addr[31:28] == 4'h3);
     wire is_obuf  = (bus_addr[31:28] == 4'h4);
     wire is_cfg   = (bus_addr[31:28] == 4'h5);
+    wire is_dma   = (bus_addr[31:28] == 4'h6);
     wire is_pbuf  = (bus_addr[31:28] == 4'h7);
+    wire is_spi   = (bus_addr[31:28] == 4'h8);
 
     // Data RAM Access
     reg dram_rvalid_reg;
@@ -171,11 +180,13 @@ module soc_top (
     end
     
     wire [127:0] obuf_rd_data;
+    wire [31:0]  spi_rdata;
     
     assign data_rvalid = dma_cfg_done || (data_req && !dma_busy && is_dram ? dram_rvalid_reg : cpu_accel_rvalid_reg);
     assign data_rdata = is_cpu_dma_cfg ? dma_cfg_rdata :
                         (is_dram ? dram_rdata_reg : 
-                        (is_obuf ? obuf_rd_data[31:0] : 32'h0));
+                        (is_obuf ? obuf_rd_data[31:0] : 
+                        (is_spi ? spi_rdata : 32'h0)));
 
     // --------------------------------------------------------
     // Accelerator Top Instantiation
@@ -200,6 +211,22 @@ module soc_top (
         .pbuf_wr_addr(bus_addr[13:4]), .pbuf_wr_data({480'b0, bus_wdata}), .pbuf_we(pbuf_we),
         
         .quant_shift(quant_shift), .relu_en(relu_en), .pool_en(pool_en)
+    );
+    
+    // --------------------------------------------------------
+    // SPI Master Instantiation
+    // --------------------------------------------------------
+    spi_master i_spi (
+        .clk(clk), .rst_n(rst_n),
+        .bus_req(bus_req && is_spi),
+        .bus_we(bus_we),
+        .bus_addr(bus_addr[3:0]),
+        .bus_wdata(bus_wdata),
+        .bus_rdata(spi_rdata),
+        .spi_sclk(spi_sclk),
+        .spi_mosi(spi_mosi),
+        .spi_miso(spi_miso),
+        .spi_cs_n(spi_cs_n)
     );
     
     // We need to extract npu_ready from accelerator_top to drive the interrupt.
