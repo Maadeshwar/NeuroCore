@@ -52,7 +52,8 @@ module accelerator_top #(
     wire [N*DATA_WIDTH-1:0] wbuf_rd_data;
     wire [N*DATA_WIDTH-1:0] obuf_wr_data;
     
-    wire npu_start_load, npu_start_mac, npu_ready;
+    wire npu_start_load, npu_start_mac;
+    wire npu_ready = 1'b1;
     wire skew_en, skew_w_en;
     
     wire [N*DATA_WIDTH-1:0] skewed_act;
@@ -97,6 +98,12 @@ module accelerator_top #(
         .obuf_rd_addr(obuf_rd_addr), .obuf_rd_data(obuf_rd_data)
     );
     
+    always @(posedge clk) begin
+        if (obuf_write_en) begin
+            $display("OBUF WRITE: addr=%d data=%x", obuf_wr_addr, final_obuf_data[31:0]);
+        end
+    end
+    
     // 3. Layer Controller
     // Note: The obuf_we and obuf_wr_addr from controller are overridden for pooling.
     // Let's modify the controller instantiation to use an internal address counter for OBUF based on actual valids.
@@ -115,7 +122,6 @@ module accelerator_top #(
         .clk(clk), .rst_n(rst_n),
         .cmd_data(cmd_data), .cmd_empty(cmd_empty), .cmd_pop(cmd_pop),
         .ibuf_rd_addr(ibuf_rd_addr), .wbuf_rd_addr(wbuf_rd_addr),
-        .obuf_wr_addr(), .obuf_we(), // Overridden above
         .npu_start_load(npu_start_load), .npu_start_mac(npu_start_mac), .npu_ready(npu_ready),
         .skew_en(skew_en), .skew_w_en(skew_w_en),
         .unskew_valid(unskew_valid),
@@ -134,22 +140,24 @@ module accelerator_top #(
         .data_in(act_to_skew), .data_out(skewed_act)
     );
     
-    // Weight pipeline stage (to match skew delay logic if needed, simple register)
-    reg [N*DATA_WIDTH-1:0] wbuf_reg;
-    always @(posedge clk) begin
-        if (skew_w_en) wbuf_reg <= wbuf_rd_data;
-    end
+    // 4. Weight Buffer (No pipeline register needed, SRAM read data is synchronous)
+    wire [N*DATA_WIDTH-1:0] wbuf_reg = wbuf_rd_data;
     
-    // 5. NPU Core
-    npu_core #(
+    // 5. Systolic Array Core (Bypass npu_core.v FSM to perfectly align with layer_controller pipeline)
+    wire array_en = skew_en || skew_w_en || flush_en;
+    wire array_load = skew_w_en;
+    
+    wire [N*DATA_WIDTH-1:0] dummy_act_out;
+    systolic_array #(
         .N(N), .DATA_WIDTH(DATA_WIDTH), .ACC_WIDTH(ACC_WIDTH)
-    ) i_npu_core (
+    ) i_array (
         .clk(clk), .rst_n(rst_n),
-        .start_load(npu_start_load), .start_mac(npu_start_mac), .ready(npu_ready),
-        .weight_in(wbuf_reg),
+        .en(array_en),
+        .load_weight(array_load),
+        .weight_in(wbuf_rd_data),
         .act_in(skewed_act),
         .psum_in({(N*ACC_WIDTH){1'b0}}),
-        .act_out(),
+        .act_out(dummy_act_out),
         .psum_out(npu_psum_out)
     );
     
@@ -162,6 +170,12 @@ module accelerator_top #(
         .data_out(unskewed_psum),
         .valid_out(unskew_valid)
     );
+    
+    always @(posedge clk) begin
+        if (unskew_valid) begin
+            $display("UNSKEW VALID: psum_out=%x", unskewed_psum[31:0]);
+        end
+    end
     
     // PBUF Control from Layer Controller
     wire [$clog2(OBUF_DEPTH)-1:0] pbuf_addr;

@@ -23,6 +23,7 @@ module soc_top (
     // 0x6000_0000 - 0x6000_001F : DMA Controller Config
     // 0x7000_0000 - 0x7000_3FFF : NPU PBUF (Biases)
     // 0x8000_0000 - 0x8000_000F : High-Speed SPI Master
+    // 0xA000_0000 - 0xA000_000F : NPU Command FIFO
     // --------------------------------------------------------
 
     // Ibex Signals
@@ -124,7 +125,7 @@ module soc_top (
 
     // Address Decoding
     wire is_dram  = (bus_addr[31:28] == 4'h1);
-    wire is_fifo  = (bus_addr[31:28] == 4'h1); // Note: 0x10000000 vs 0x00010000
+    wire is_fifo  = (bus_addr[31:28] == 4'hA);
     wire is_ibuf  = (bus_addr[31:28] == 4'h2);
     wire is_wbuf  = (bus_addr[31:28] == 4'h3);
     wire is_obuf  = (bus_addr[31:28] == 4'h4);
@@ -191,7 +192,7 @@ module soc_top (
     // --------------------------------------------------------
     // Accelerator Top Instantiation
     // --------------------------------------------------------
-    wire cmd_push = bus_req && bus_we && (bus_addr[31:28] == 4'h1); // 0x1000... FIFO
+    wire cmd_push = bus_req && bus_we && is_fifo; // 0xA000_0000
     wire ibuf_we  = bus_req && bus_we && is_ibuf;
     wire wbuf_we  = bus_req && bus_we && is_wbuf;
     wire pbuf_we  = bus_req && bus_we && is_pbuf;
