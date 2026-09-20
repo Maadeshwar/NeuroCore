@@ -192,7 +192,7 @@ module soc_mock_top (
     wire cmd_full;
     
     npu_top #(
-        .N(8), .DATA_WIDTH(8), .ACC_WIDTH(32)
+        .N(16), .DATA_WIDTH(8), .ACC_WIDTH(32)
     ) i_accelerator (
         .clk(clk), .rst_n(rst_n),
         .cmd_in(bus_wdata), .cmd_push(cmd_push), .cmd_full(cmd_full),
