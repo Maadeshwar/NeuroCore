@@ -1,209 +1,327 @@
 import cocotb
 from cocotb.clock import Clock
-from cocotb.triggers import RisingEdge, Timer, Combine
+from cocotb.triggers import RisingEdge, Timer
 import numpy as np
-import os
 
-try:
-    from cocotb_coverage.coverage import CoverPoint, coverage_db
-except ImportError:
-    cocotb.log.warning("cocotb-coverage not installed. Functional coverage will be disabled.")
-    def CoverPoint(*args, **kwargs):
-        def decorator(func):
-            return func
-        return decorator
-    class MockDB:
-        def export_to_xml(self, *args, **kwargs): pass
-    coverage_db = MockDB()
+OP_LOAD_WEIGHTS = 1
+OP_RUN_MAC      = 2
+OP_SET_TILER    = 3
 
-# -------------------------------------------------------------------
-# Functional Coverage Definitions
-# -------------------------------------------------------------------
-# Track which configurations and test types we hit during the regression
-@CoverPoint("top.npu_core.N", xf=lambda params: params['N'], bins=[4, 8, 16, 32, 64])
-@CoverPoint("top.npu_core.test_type", xf=lambda params: params['test_type'], bins=["random", "directed_identity", "directed_zeros", "directed_max", "directed_checkerboard"])
-def sample_test_coverage(params):
-    pass
-
-# -------------------------------------------------------------------
-# UVM-like Base Components
-# -------------------------------------------------------------------
 class NpuDriver:
-    """Drives inputs to the NPU"""
     def __init__(self, dut, clk):
         self.dut = dut
         self.clk = clk
         self.N = int(dut.N.value)
         self.DATA_WIDTH = int(dut.DATA_WIDTH.value)
+        self.ACC_WIDTH = int(dut.ACC_WIDTH.value)
 
     async def reset(self):
         self.dut.rst_n.value = 0
-        self.dut.start_load.value = 0
-        self.dut.start_mac.value = 0
-        self.dut.weight_in.value = 0
-        self.dut.act_in.value = 0
-        self.dut.psum_in.value = 0
-        await Timer(20, units="ns")
+        self.dut.cmd_push.value = 0
+        self.dut.ibuf_we.value = 0
+        self.dut.wbuf_we.value = 0
+        self.dut.pbuf_we.value = 0
+        self.dut.quant_shift.value = 0
+        self.dut.relu_en.value = 0
+        self.dut.pool_en.value = 0
+        await Timer(20, units='ns')
         self.dut.rst_n.value = 1
         await RisingEdge(self.clk)
 
-    async def load_weights(self, W):
-        self.dut.start_load.value = 1
+    async def write_wbuf(self, addr, data):
+        self.dut.wbuf_wr_addr.value = addr
+        self.dut.wbuf_wr_data.value = data
+        self.dut.wbuf_we.value = 1
         await RisingEdge(self.clk)
-        self.dut.start_load.value = 0
-        
-        for i in range(self.N):
-            row_data = W[self.N - 1 - i, :]
-            val = 0
-            for j in range(self.N):
-                mask = (1 << self.DATA_WIDTH) - 1
-                val |= (int(row_data[j]) & mask) << (j * self.DATA_WIDTH)
-            self.dut.weight_in.value = val
+        self.dut.wbuf_we.value = 0
+
+    async def write_ibuf(self, addr, data):
+        self.dut.ibuf_wr_addr.value = addr
+        self.dut.ibuf_wr_data.value = data
+        self.dut.ibuf_we.value = 1
+        await RisingEdge(self.clk)
+        self.dut.ibuf_we.value = 0
+
+    async def push_cmd(self, opcode, payload):
+        while self.dut.cmd_full.value == 1:
             await RisingEdge(self.clk)
-            
-        self.dut.weight_in.value = 0
-        while self.dut.ready.value == 0:
-            await RisingEdge(self.clk)
+        self.dut.cmd_in.value = (opcode << 28) | (payload & 0x0FFFFFFF)
+        self.dut.cmd_push.value = 1
+        await RisingEdge(self.clk)
+        self.dut.cmd_push.value = 0
 
-    async def stream_activations(self, A):
-        self.dut.start_mac.value = 1
-        self.dut.psum_in.value = 0
-        total_cycles = 3 * self.N
-        
-        for cycle in range(total_cycles):
-            val = 0
-            for i in range(self.N):
-                j = cycle - i
-                if 0 <= j < self.N:
-                    act_val = A[j, i]
-                else:
-                    act_val = 0
-                mask = (1 << self.DATA_WIDTH) - 1
-                val |= (int(act_val) & mask) << (i * self.DATA_WIDTH)
-            self.dut.act_in.value = val
-            await RisingEdge(self.clk)
-            
-        self.dut.start_mac.value = 0
+    async def read_obuf(self, addr):
+        self.dut.obuf_rd_addr.value = addr
+        await RisingEdge(self.clk)
+        await RisingEdge(self.clk) # 1 cycle read latency
+        return self.dut.obuf_rd_data.value
 
-class NpuMonitor:
-    """Monitors outputs from the NPU"""
-    def __init__(self, dut, clk):
-        self.dut = dut
-        self.clk = clk
-        self.N = int(dut.N.value)
-        self.actual_out = np.zeros((self.N, self.N), dtype=np.int32)
-
-    async def monitor_output(self):
-        total_cycles = 3 * self.N
-        for cycle in range(total_cycles):
-            out_val = self.dut.psum_out.value
-            if out_val.is_resolvable:
-                out_int = int(out_val)
-                for j in range(self.N):
-                    # Adjusting index mapping by -1 to account for 1 cycle PE output delay
-                    i_calc = cycle - j - self.N - 1
-                    if 0 <= i_calc < self.N:
-                        mask = 0xFFFFFFFF
-                        res = (out_int >> (j * 32)) & mask
-                        # Sign extension for INT32
-                        if res & 0x80000000:
-                            res -= 0x100000000
-                        self.actual_out[i_calc, j] = res
-            await RisingEdge(self.clk)
-
-class NpuScoreboard:
-    """Compares monitored output with Golden Model (NumPy)"""
-    def __init__(self, N):
-        self.N = N
-
-    def check(self, expected, actual):
-        if np.array_equal(expected, actual):
-            cocotb.log.info("SCOREBOARD: PASS - Actual output perfectly matches golden model.")
-        else:
-            cocotb.log.error(f"SCOREBOARD: FAIL - Matrix mismatch!\nExpected:\n{expected}\nActual:\n{actual}")
-            assert False, "Scoreboard mismatch"
-
-# -------------------------------------------------------------------
-# Test Environment (Agent)
-# -------------------------------------------------------------------
-async def npu_env(dut, W, A, test_type="random"):
-    """Top level environment coordinating the UVM-like components"""
-    N = int(dut.N.value)
-    
-    # 1. Sample Functional Coverage
-    sample_test_coverage({"N": N, "test_type": test_type})
-    
-    clock = Clock(dut.clk, 10, units="ns")
+async def run_npu_test(dut, W, A):
+    clock = Clock(dut.clk, 10, units='ns')
     cocotb.start_soon(clock.start())
     
     driver = NpuDriver(dut, dut.clk)
-    monitor = NpuMonitor(dut, dut.clk)
-    scoreboard = NpuScoreboard(N)
-    
-    # 2. Golden Model
-    expected_out = np.dot(A.astype(np.int32), W.astype(np.int32))
-    
-    # 3. Stimulus
     await driver.reset()
-    await driver.load_weights(W)
     
-    # 4. Concurrently run driver and monitor
-    drive_task = cocotb.start_soon(driver.stream_activations(A))
-    monitor_task = cocotb.start_soon(monitor.monitor_output())
-    
-    await Combine(drive_task, monitor_task)
-    
-    # 5. Scoreboard Check
-    scoreboard.check(expected_out, monitor.actual_out)
+    # 1. Load WBUF (Weights)
+    for i in range(driver.N):
+        row_data = W[driver.N - 1 - i, :]
+        val = 0
+        for j in range(driver.N):
+            mask = (1 << driver.DATA_WIDTH) - 1
+            val |= (int(row_data[j]) & mask) << (j * driver.DATA_WIDTH)
+        await driver.write_wbuf(i, val)
 
-# -------------------------------------------------------------------
-# Test Cases (Regression Suite)
-# -------------------------------------------------------------------
+    # 2. Load IBUF (Activations)
+    for i in range(driver.N):
+        row_data = A[i, :]
+        val = 0
+        for j in range(driver.N):
+            mask = (1 << driver.DATA_WIDTH) - 1
+            val |= (int(row_data[j]) & mask) << (j * driver.DATA_WIDTH)
+        await driver.write_ibuf(i, val)
+        
+    # 3. Configure
+    dut.quant_shift.value = 0
+    dut.relu_en.value = 0
+    dut.pool_en.value = 0
+    
+    # 4. Commands
+    await driver.push_cmd(OP_LOAD_WEIGHTS, driver.N)
+    await driver.push_cmd(OP_SET_TILER, 0)
+    
+    run_payload = (0 << 27) | (1 << 26) | driver.N
+    await driver.push_cmd(OP_RUN_MAC, run_payload)
+    
+    # Wait for execution
+    for _ in range(50 + driver.N * 3):
+        await RisingEdge(dut.clk)
+        
+    # 5. Read OBUF
+    actual_out = np.zeros((driver.N, driver.N), dtype=np.int32)
+    for i in range(driver.N):
+        out_val = await driver.read_obuf(i)
+        if out_val.is_resolvable:
+            out_int = int(out_val)
+            for j in range(driver.N):
+                mask = 0xFF
+                res = (out_int >> (j * 8)) & mask
+                if res & 0x80:
+                    res -= 0x100
+                actual_out[i, j] = res
 
-@cocotb.test()
-async def test_random(dut):
-    """Random Matrix Multiplication Test"""
-    N = int(dut.N.value)
-    W = np.random.randint(-128, 127, size=(N, N), dtype=np.int8)
-    A = np.random.randint(-128, 127, size=(N, N), dtype=np.int8)
-    await npu_env(dut, W, A, test_type="random")
+    expected_out = np.dot(A.astype(np.int32), W.astype(np.int32))
+    expected_out = np.clip(expected_out, -128, 127)
+    
+    if np.array_equal(expected_out, actual_out):
+        cocotb.log.info('SCOREBOARD: PASS - Actual output perfectly matches golden model.')
+    else:
+        cocotb.log.error(f'SCOREBOARD: FAIL - Matrix mismatch!\nExpected:\n{expected_out}\nActual:\n{actual_out}')
+        assert False, 'Scoreboard mismatch'
 
 @cocotb.test()
 async def test_identity(dut):
-    """Directed Test: Identity Matrix"""
     N = int(dut.N.value)
     W = np.eye(N, dtype=np.int8)
+    A = np.random.randint(-10, 10, size=(N, N), dtype=np.int8)
+    await run_npu_test(dut, W, A)
+
+@cocotb.test()
+async def test_random(dut):
+    N = int(dut.N.value)
+    W = np.random.randint(-128, 127, size=(N, N), dtype=np.int8)
     A = np.random.randint(-128, 127, size=(N, N), dtype=np.int8)
-    await npu_env(dut, W, A, test_type="directed_identity")
+    await run_npu_test(dut, W, A)
 
 @cocotb.test()
 async def test_zeros(dut):
-    """Directed Test: Zeros Matrix (No propagation)"""
     N = int(dut.N.value)
     W = np.zeros((N, N), dtype=np.int8)
     A = np.random.randint(-128, 127, size=(N, N), dtype=np.int8)
-    await npu_env(dut, W, A, test_type="directed_zeros")
+    await run_npu_test(dut, W, A)
 
 @cocotb.test()
 async def test_max_values(dut):
-    """Directed Test: Max Positive/Negative Boundaries"""
     N = int(dut.N.value)
     W = np.full((N, N), 127, dtype=np.int8)
     A = np.full((N, N), -128, dtype=np.int8)
-    await npu_env(dut, W, A, test_type="directed_max")
+    await run_npu_test(dut, W, A)
 
 @cocotb.test()
 async def test_checkerboard(dut):
-    """Directed Test: Alternating Checkboard Matrix"""
     N = int(dut.N.value)
-    # Create checkerboard pattern
     W = np.fromfunction(lambda i, j: (i + j) % 2, (N, N)).astype(np.int8) * 127
     A = np.fromfunction(lambda i, j: (i + j + 1) % 2, (N, N)).astype(np.int8) * 127
-    await npu_env(dut, W, A, test_type="directed_checkerboard")
+    await run_npu_test(dut, W, A)
 
 @cocotb.test()
-async def coverage_report(dut):
-    """Generate the Coverage report after all tests."""
-    # Simply running an empty test to export coverage db
-    coverage_db.export_to_xml(filename="coverage.xml")
-    cocotb.log.info("Functional Coverage report generated (coverage.xml)")
+async def test_relu(dut):
+    N = int(dut.N.value)
+    # W = Identity
+    W = np.eye(N, dtype=np.int8)
+    # A has negatives and positives
+    A = np.random.randint(-128, 127, size=(N, N), dtype=np.int8)
+    
+    clock = Clock(dut.clk, 10, units='ns')
+    cocotb.start_soon(clock.start())
+    
+    driver = NpuDriver(dut, dut.clk)
+    await driver.reset()
+    
+    # Load Weights and Activations
+    for i in range(N):
+        row_data = W[N - 1 - i, :]
+        val = sum(((int(row_data[j]) & 0xFF) << (j * 8)) for j in range(N))
+        await driver.write_wbuf(i, val)
+
+    for i in range(N):
+        row_data = A[i, :]
+        val = sum(((int(row_data[j]) & 0xFF) << (j * 8)) for j in range(N))
+        await driver.write_ibuf(i, val)
+        
+    # Configure with ReLU
+    dut.quant_shift.value = 0
+    dut.relu_en.value = 1
+    dut.pool_en.value = 0
+    
+    await driver.push_cmd(OP_LOAD_WEIGHTS, N)
+    await driver.push_cmd(OP_SET_TILER, 0)
+    await driver.push_cmd(OP_RUN_MAC, (0 << 27) | (1 << 26) | N)
+    
+    for _ in range(50 + N * 3):
+        await RisingEdge(dut.clk)
+        
+    actual_out = np.zeros((N, N), dtype=np.int32)
+    for i in range(N):
+        out_val = await driver.read_obuf(i)
+        if out_val.is_resolvable:
+            out_int = int(out_val)
+            for j in range(N):
+                res = (out_int >> (j * 8)) & 0xFF
+                if res & 0x80: res -= 0x100
+                actual_out[i, j] = res
+
+    expected_out = np.dot(A.astype(np.int32), W.astype(np.int32))
+    expected_out = np.clip(expected_out, -128, 127)
+    expected_out = np.maximum(0, expected_out) # ReLU
+    
+    if np.array_equal(expected_out, actual_out):
+        cocotb.log.info('SCOREBOARD: PASS - ReLU output matches golden model.')
+    else:
+        cocotb.log.error(f'SCOREBOARD: FAIL - ReLU mismatch!\nExpected:\n{expected_out}\nActual:\n{actual_out}')
+        assert False, 'ReLU mismatch'
+
+def pool2d(A, kernel_size, stride):
+    output_shape = ((A.shape[0] - kernel_size)//stride + 1, (A.shape[1] - kernel_size)//stride + 1)
+    kernel_size = (kernel_size, kernel_size)
+    A_w = np.lib.stride_tricks.as_strided(A, shape=output_shape + kernel_size, strides=(stride*A.strides[0], stride*A.strides[1]) + A.strides)
+    A_w = A_w.reshape(-1, *kernel_size)
+    return A_w.max(axis=(1,2)).reshape(output_shape)
+
+@cocotb.test()
+async def test_max_pool(dut):
+    N = int(dut.N.value)
+    W = np.eye(N, dtype=np.int8)
+    A = np.random.randint(-128, 127, size=(N, N), dtype=np.int8)
+    
+    clock = Clock(dut.clk, 10, units='ns')
+    cocotb.start_soon(clock.start())
+    
+    driver = NpuDriver(dut, dut.clk)
+    await driver.reset()
+    
+    for i in range(N):
+        row_data = W[N - 1 - i, :]
+        val = sum(((int(row_data[j]) & 0xFF) << (j * 8)) for j in range(N))
+        await driver.write_wbuf(i, val)
+
+    for i in range(N):
+        row_data = A[i, :]
+        val = sum(((int(row_data[j]) & 0xFF) << (j * 8)) for j in range(N))
+        await driver.write_ibuf(i, val)
+        
+    dut.quant_shift.value = 0
+    dut.relu_en.value = 0
+    dut.pool_en.value = 1
+    
+    await driver.push_cmd(OP_LOAD_WEIGHTS, N)
+    await driver.push_cmd(OP_SET_TILER, 0)
+    await driver.push_cmd(OP_RUN_MAC, (0 << 27) | (1 << 26) | N)
+    
+    for _ in range(50 + N * 3):
+        await RisingEdge(dut.clk)
+        
+    actual_out = np.zeros((N//2, N//2), dtype=np.int32)
+    # Output is written to OBUF in N/2 consecutive addresses, each containing N/2 valid elements in the lower half
+    for i in range(N//2):
+        out_val = await driver.read_obuf(i)
+        if out_val.is_resolvable:
+            out_int = int(out_val)
+            for j in range(N//2):
+                res = (out_int >> (j * 8)) & 0xFF
+                if res & 0x80: res -= 0x100
+                actual_out[i, j] = res
+
+    expected_out = np.dot(A.astype(np.int32), W.astype(np.int32))
+    expected_out = np.clip(expected_out, -128, 127)
+    expected_out = pool2d(expected_out, 2, 2)
+    
+    if np.array_equal(expected_out, actual_out):
+        cocotb.log.info('SCOREBOARD: PASS - Max Pool output matches golden model.')
+    else:
+        cocotb.log.error(f'SCOREBOARD: FAIL - Max Pool mismatch!\nExpected:\n{expected_out}\nActual:\n{actual_out}')
+        assert False, 'Max Pool mismatch'
+
+@cocotb.test()
+async def test_quantize(dut):
+    N = int(dut.N.value)
+    # W = array of 2
+    W = np.eye(N, dtype=np.int8) * 2
+    A = np.random.randint(-50, 50, size=(N, N), dtype=np.int8)
+    
+    clock = Clock(dut.clk, 10, units='ns')
+    cocotb.start_soon(clock.start())
+    
+    driver = NpuDriver(dut, dut.clk)
+    await driver.reset()
+    
+    for i in range(N):
+        row_data = W[N - 1 - i, :]
+        val = sum(((int(row_data[j]) & 0xFF) << (j * 8)) for j in range(N))
+        await driver.write_wbuf(i, val)
+
+    for i in range(N):
+        row_data = A[i, :]
+        val = sum(((int(row_data[j]) & 0xFF) << (j * 8)) for j in range(N))
+        await driver.write_ibuf(i, val)
+        
+    dut.quant_shift.value = 1 # Shift right by 1 (divide by 2)
+    dut.relu_en.value = 0
+    dut.pool_en.value = 0
+    
+    await driver.push_cmd(OP_LOAD_WEIGHTS, N)
+    await driver.push_cmd(OP_SET_TILER, 0)
+    await driver.push_cmd(OP_RUN_MAC, (0 << 27) | (1 << 26) | N)
+    
+    for _ in range(50 + N * 3):
+        await RisingEdge(dut.clk)
+        
+    actual_out = np.zeros((N, N), dtype=np.int32)
+    for i in range(N):
+        out_val = await driver.read_obuf(i)
+        if out_val.is_resolvable:
+            out_int = int(out_val)
+            for j in range(N):
+                res = (out_int >> (j * 8)) & 0xFF
+                if res & 0x80: res -= 0x100
+                actual_out[i, j] = res
+
+    expected_out = np.dot(A.astype(np.int32), W.astype(np.int32))
+    expected_out = np.right_shift(expected_out, 1)
+    expected_out = np.clip(expected_out, -128, 127)
+    
+    if np.array_equal(expected_out, actual_out):
+        cocotb.log.info('SCOREBOARD: PASS - Quantization output matches golden model.')
+    else:
+        cocotb.log.error(f'SCOREBOARD: FAIL - Quantization mismatch!\nExpected:\n{expected_out}\nActual:\n{actual_out}')
+        assert False, 'Quantization mismatch'
