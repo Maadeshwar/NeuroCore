@@ -10,42 +10,72 @@
 
 ---
 
-<h2 align="center">System Architecture Overview</h2>
+## System Architecture
 
-**NeuroCore** is a high-performance, configurable, AI-accelerated System-on-Chip (SoC). It seamlessly merges a custom RISC-V processor with a deeply integrated Neural Processing Unit (NPU) subsystem, establishing a production-grade environment for executing deep learning models directly at the edge.
+**NeuroCore** is a high-performance System-on-Chip (SoC) that physically merges a custom RISC-V processor with a massively parallel, memory-mapped Neural Processing Unit (NPU).
 
-<h3 align="center">The 16x16 NPU Subsystem</h3>
-At the physical core of the NeuroCore SoC is our proprietary, tightly-coupled **16x16 Systolic Array NPU**. 
-* **Seamless Scalability:** By leveraging the NPU's universal parameterized logic, we physically instantiated the accelerator inside the SoC with parameter N = 16, instantly scaling it to a high-performance parallel compute matrix.
-* **3-Stage FSM Intelligence:** The NPU abstracts all physical pipeline timing and data skewing via a highly optimized 3-Stage Finite State Machine (IDLE, LOAD_WEIGHT, RUN_MAC). This controller completely automates SRAM memory fetching and matrix dot-product orchestration without stalling the CPU.
-* **Native Post-Processing Integration:** The 16x16 subsystem natively processes Bias Addition (A*B + C), Hardware ReLU non-linear activation, 2x2 Max Pooling spatial downsampling, and Quantization Scaling directly within the hardware pipeline, requiring zero post-processing overhead from the RISC-V core.
+```mermaid
+flowchart LR
+    subgraph RISCV [RISC-V Subsystem]
+        CPU[RISC-V Core]
+        DMA[DMA Controller]
+        IMEM[(Instruction<br>Memory)]
+        DMEM[(Main Data<br>Memory)]
+    end
 
----
+    subgraph Accelerator [16x16 NPU Subsystem]
+        FIFO[Command FIFO]
+        SRAM[(Localized<br>SRAMs)]
+        FSM{3-Stage FSM}
+        SYS[16x16 Systolic Array]
+    end
 
-<h2 align="center">Integration and Data Flow</h2>
+    CPU -->|Push Commands| FIFO
+    DMA -->|Burst Transfer| SRAM
+    DMEM <--> DMA
+    FIFO --> FSM
+    SRAM --> SYS
+    FSM -->|Hardware Interrupt| CPU
+```
 
-<h3 align="center">Direct Memory Mapping</h3>
-The NPU memory modules (IBUF, WBUF, PBUF, OBUF) are directly memory-mapped into the RISC-V CPU's physical address space. This zero-protocol SRAM architecture avoids the extreme latency of heavy bus wrappers.
+## Integration & Data Flow
 
-<h3 align="center">Execution Pipeline</h3>
-1. **DMA Streaming:** The RISC-V CPU configures the internal Direct Memory Access (DMA) controller to rapidly stream flattened input images (Activations) and convolutional kernels (Weights) from Main DRAM directly into the NPU's localized SRAM buffers.
-2. **Command Dispatch:** The CPU pushes a precise 32-bit execution command packet (e.g., OP_RUN_MAC) into the NPU's asynchronous Command FIFO, releasing the CPU to perform other operations.
-3. **Autonomous Execution:** The NPU's 3-Stage FSM detects the command, wakes from the IDLE state, and autonomously drives the physical matrix math.
-4. **Hardware Interrupt:** Upon completion of the matrix block and post-processing, the FSM raises a hardware interrupt (npu_ready) back to the RISC-V processor, signaling that the output tensor is ready to be fetched from the OBUF.
+By leveraging the NPU's universal parameterization, NeuroCore physically instantiates the compute matrix at a **16x16** scale. The design avoids complex bus protocol wrappers internally by directly memory-mapping the NPU SRAM buffers into the RISC-V physical address space.
 
----
+### Execution Pipeline (Firmware Perspective)
+The bare-metal C firmware orchestrates hardware acceleration autonomously, completely freeing the RISC-V CPU during matrix execution:
 
-<h2 align="center">End-to-End Verification</h2>
+```c
+// 1. DMA streams data from Main Memory to NPU SRAMs
+dma_copy(WEIGHTS_ADDR, WBUF_BASE, 64);
+dma_copy(ACTS_ADDR, IBUF_BASE, 64);
 
-NeuroCore includes an exhaustive SoC-level verification suite. The environment simulates the RISC-V processor executing a bare-metal C firmware payload (firmware.c) that rigorously validates the hardware logic.
+// 2. Configure Hardware Post-Processing (ReLU & 2x2 Max Pool)
+*NPU_CFG = (1 << 5) | (1 << 6); 
 
-<h3 align="center">Firmware Validation Routine</h3>
-* The C compiler generates firmware.hex containing the RISC-V machine instructions.
-* The firmware dynamically manages the DMA controller to push exact 16x16 matrices into the NPU.
-* It dispatches execution commands via the Memory-Mapped FIFO to test all internal paths.
-* It explicitly asserts that the hardware returns mathematically identical results for:
-  1. Baseline Matrix-Vector Multiplication.
-  2. ReLU Negative Thresholding.
-  3. 2x2 Max Pooling Operations.
+// 3. Dispatch execution command to async FIFO
+// Payload specifies accumulate logic and cycle counts
+*NPU_CMD_FIFO = build_cmd(OP_RUN_MAC, payload);
 
-All operations execute flawlessly in simulated hardware, proving the production-grade stability of the complete SoC architecture.
+// 4. CPU is free to execute other instructions!
+// NPU raises hardware interrupt when complete.
+```
+
+## Structural Address Mapping
+
+The SoC utilizes a tightly coupled memory map to bridge the processor and accelerator:
+
+| Peripheral | Base Address | Function |
+| :--- | :--- | :--- |
+| **DMEM** | `0x10000000` | Main CPU Data RAM |
+| **IBUF** | `0x20000000` | NPU Input Activations |
+| **WBUF** | `0x30000000` | NPU Matrix Weights |
+| **OBUF** | `0x40000000` | NPU Final Processed Output |
+| **CFG**  | `0x50000000` | NPU Post-Processing Settings |
+| **DMA**  | `0x60000000` | DMA Controller Registers |
+| **PBUF** | `0x70000000` | NPU Bias Preload Buffer |
+| **FIFO** | `0xA0000000` | NPU Command Queue |
+
+## Verification Routine
+
+The complete SoC verification suite simulates the RISC-V core executing compiled `firmware.c`. The firmware explicitly manages the DMA, triggers the NPU execution, and asserts that the hardware returns mathematically flawless results for 16x16 Matrix Multiplications, ReLU Negative Thresholding, and Spatial Pooling.
