@@ -53,11 +53,13 @@ The custom bus arbiter maps the hardware peripherals into the following address 
 *   `soc_top.v`: Top-level integration and Priority Bus Arbiter.
     *   `ibex_core`: RISC-V RV32IMC processor.
     *   `dma_controller.v`: 3-Stage FSM memory copy engine.
-    *   `accelerator_top.v`: NPU Wrapper and Post-Processing.
+    *   `npu_top.v`: The complete NPU Subsystem IP.
         *   `layer_controller.v`: 3-Stage FSM Command scheduler and Tiler.
+        *   `sram_buffers.v`: Internal IBUF, WBUF, and OBUF SRAM wrappers.
         *   `accumulator_pbuf.v`: 32-bit precision accumulator.
+        *   `activation_pool.v`: Hardware ReLU and Quantization.
         *   `max_pool_2x2.v`: Hardware 2D pooling logic.
-        *   `npu_core.v`: The 16x16 Systolic Matrix Multiplier.
+        *   `systolic_array.v`: The 16x16 Systolic Matrix Multiplier.
 
 ## Status and Verification
 
