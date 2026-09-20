@@ -2,7 +2,7 @@
 `default_nettype none
 
 module sram_buffers #(
-    parameter N = 8,
+    parameter N = 16,
     parameter DATA_WIDTH = 8,
     parameter IBUF_DEPTH = 1024,
     parameter WBUF_DEPTH = 1024,

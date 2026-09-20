@@ -3,7 +3,7 @@
 /* verilator lint_off DECLFILENAME */
 
 module axis_skew_buffer #(
-    parameter N = 8,
+    parameter N = 16,
     parameter DATA_WIDTH = 8
 )(
     input  wire                     clk,
@@ -38,7 +38,7 @@ module axis_skew_buffer #(
 endmodule
 
 module axis_unskew_buffer #(
-    parameter N = 8,
+    parameter N = 16,
     parameter DATA_WIDTH = 32
 )(
     input  wire                     clk,

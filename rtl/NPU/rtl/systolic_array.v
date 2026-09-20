@@ -1,7 +1,7 @@
 `default_nettype none
 
 module systolic_array #(
-    parameter N = 8,
+    parameter N = 16,
     parameter DATA_WIDTH = 8,
     parameter ACC_WIDTH = 32
 )(
