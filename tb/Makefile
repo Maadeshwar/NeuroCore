@@ -14,17 +14,14 @@ RTL_SRC = mock_cpu.v \
           soc_mock_top.v \
           ../rtl/soc/dma_controller.v \
           ../rtl/soc/spi_master.v \
-          ../rtl/accelerator/accelerator_top.v \
-          ../rtl/accelerator/layer_controller.v \
-          ../rtl/accelerator/accumulator_pbuf.v \
-          ../rtl/accelerator/max_pool_2x2.v \
-          ../rtl/accelerator/activation_pool.v \
-          ../rtl/accelerator/skew_buffers.v \
-          ../rtl/accelerator/sram_buffers.v \
-          ../rtl/accelerator/npu_command_fifo.v \
-          ../rtl/NPU/rtl/npu_core.v \
-          ../rtl/NPU/rtl/axis_npu.v \
+          ../rtl/NPU/rtl/npu_top.v \
+          ../rtl/NPU/rtl/layer_controller.v \
+          ../rtl/NPU/rtl/accumulator_pbuf.v \
+          ../rtl/NPU/rtl/max_pool_2x2.v \
+          ../rtl/NPU/rtl/activation_pool.v \
           ../rtl/NPU/rtl/skew_buffers.v \
+          ../rtl/NPU/rtl/sram_buffers.v \
+          ../rtl/NPU/rtl/npu_command_fifo.v \
           ../rtl/NPU/rtl/systolic_array.v \
           ../rtl/NPU/rtl/pe.v
 
@@ -39,7 +36,7 @@ firmware.hex: firmware.elf
 
 obj_dir/Vsoc_tb: soc_tb.v sim_main.cpp firmware.hex
 	$(VERILATOR) -Wall --cc --exe --build -Wno-fatal \
-	-I. -I../rtl/soc -I../rtl/accelerator -I../rtl/NPU/rtl -I../rtl/CPU/ibex/rtl \
+	-I. -I../rtl/soc -I../rtl/NPU/rtl -I../rtl/CPU/ibex/rtl \
 	--top-module soc_tb sim_main.cpp soc_tb.v $(RTL_SRC)
 
 run: obj_dir/Vsoc_tb

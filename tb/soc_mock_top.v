@@ -191,7 +191,7 @@ module soc_mock_top (
     
     wire cmd_full;
     
-    accelerator_top #(
+    npu_top #(
         .N(16), .DATA_WIDTH(8), .ACC_WIDTH(32)
     ) i_accelerator (
         .clk(clk), .rst_n(rst_n),
@@ -222,9 +222,9 @@ module soc_mock_top (
         .spi_cs_n(spi_cs_n)
     );
     
-    // We need to extract npu_ready from accelerator_top to drive the interrupt.
+    // We need to extract npu_ready from npu_top to drive the interrupt.
     // In Verilog, we can use hierarchical referencing for quick prototyping, 
-    // or add it to the port list. Let's assume accelerator_top exposes it or we hierarchical ref it:
+    // or add it to the port list. Let's assume npu_top exposes it or we hierarchical ref it:
     assign npu_ready = i_accelerator.i_controller.npu_ready;
 
 endmodule

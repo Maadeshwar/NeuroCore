@@ -1,6 +1,8 @@
+/* verilator lint_off SYNCASYNCNET */
+/* verilator lint_off UNUSEDSIGNAL */
 `default_nettype none
 
-module accelerator_top #(
+module npu_top #(
     parameter N = 16,
     parameter DATA_WIDTH = 8,
     parameter ACC_WIDTH = 32,
@@ -98,7 +100,7 @@ module accelerator_top #(
         .obuf_rd_addr(obuf_rd_addr), .obuf_rd_data(obuf_rd_data)
     );
     
-    always @(posedge clk) begin
+    always @(posedge clk or negedge rst_n) begin
         if (obuf_write_en) begin
             $display("OBUF WRITE: addr=%d data=%x", obuf_wr_addr, final_obuf_data[31:0]);
         end
@@ -116,38 +118,37 @@ module accelerator_top #(
     
     wire flush_en;
     
+    /* verilator lint_off PINCONNECTEMPTY */
     layer_controller #(
-        .N(N), .IBUF_DEPTH(IBUF_DEPTH), .WBUF_DEPTH(WBUF_DEPTH), .OBUF_DEPTH(OBUF_DEPTH)
+        .N(N), .IBUF_DEPTH(IBUF_DEPTH), .WBUF_DEPTH(WBUF_DEPTH)
     ) i_controller (
         .clk(clk), .rst_n(rst_n),
         .cmd_data(cmd_data), .cmd_empty(cmd_empty), .cmd_pop(cmd_pop),
         .ibuf_rd_addr(ibuf_rd_addr), .wbuf_rd_addr(wbuf_rd_addr),
-        .npu_start_load(npu_start_load), .npu_start_mac(npu_start_mac), .npu_ready(npu_ready),
+        .npu_start_load(), .npu_start_mac(), .npu_ready(npu_ready),
         .skew_en(skew_en), .skew_w_en(skew_w_en),
         .unskew_valid(unskew_valid),
         .pbuf_addr(pbuf_addr), .accum_en(accum_en), .finish_pass(finish_pass),
         .flush_en(flush_en)
     );
+    /* verilator lint_on PINCONNECTEMPTY */
     
     // 4. Skew Buffers (Input Activations)
     // During S_FLUSH, we must feed 0s into the array to push the final partial sums out
     wire [N*DATA_WIDTH-1:0] act_to_skew = flush_en ? {(N*DATA_WIDTH){1'b0}} : ibuf_rd_data;
     
-    skew_buffer #(
+    axis_skew_buffer #(
         .N(N), .DATA_WIDTH(DATA_WIDTH)
     ) i_skew_act (
         .clk(clk), .rst_n(rst_n), .en(skew_en),
         .data_in(act_to_skew), .data_out(skewed_act)
     );
     
-    // 4. Weight Buffer (No pipeline register needed, SRAM read data is synchronous)
-    wire [N*DATA_WIDTH-1:0] wbuf_reg = wbuf_rd_data;
-    
     // 5. Systolic Array Core (Bypass npu_core.v FSM to perfectly align with layer_controller pipeline)
     wire array_en = skew_en || skew_w_en || flush_en;
     wire array_load = skew_w_en;
     
-    wire [N*DATA_WIDTH-1:0] dummy_act_out;
+    /* verilator lint_off PINCONNECTEMPTY */
     systolic_array #(
         .N(N), .DATA_WIDTH(DATA_WIDTH), .ACC_WIDTH(ACC_WIDTH)
     ) i_array (
@@ -157,21 +158,23 @@ module accelerator_top #(
         .weight_in(wbuf_rd_data),
         .act_in(skewed_act),
         .psum_in({(N*ACC_WIDTH){1'b0}}),
-        .act_out(dummy_act_out),
+        .act_out(),
         .psum_out(npu_psum_out)
     );
+    /* verilator lint_on PINCONNECTEMPTY */
     
     // 6. Unskew Buffer (Outputs)
-    unskew_buffer #(
+    axis_unskew_buffer #(
         .N(N), .DATA_WIDTH(ACC_WIDTH)
     ) i_unskew_psum (
-        .clk(clk), .rst_n(rst_n), .en(skew_en),
+        .clk(clk), .rst_n(rst_n), .en(array_en),
+        .valid_in(skew_en),
         .data_in(npu_psum_out),
         .data_out(unskewed_psum),
         .valid_out(unskew_valid)
     );
     
-    always @(posedge clk) begin
+    always @(posedge clk or negedge rst_n) begin
         if (unskew_valid) begin
             $display("UNSKEW VALID: psum_out=%x", unskewed_psum[31:0]);
         end

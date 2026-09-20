@@ -1,3 +1,4 @@
+/* verilator lint_off BLKSEQ */
 `default_nettype none
 
 module accumulator_pbuf #(
@@ -32,10 +33,7 @@ module accumulator_pbuf #(
     // 32-bit Partial Sum / Bias SRAM
     reg [N*ACC_WIDTH-1:0] pbuf_mem [0:PBUF_DEPTH-1];
     
-    // CPU/DMA Write Port (Port B)
-    always @(posedge clk) begin
-        if (cpu_we) pbuf_mem[cpu_addr] <= cpu_wdata;
-    end
+    // CPU/DMA Write Port is handled in the main always block
     
     // Pipeline registers to align read data with incoming psum_in
     // Since pbuf_addr is provided along with valid_in, it takes 1 cycle to read SRAM.
@@ -48,6 +46,7 @@ module accumulator_pbuf #(
     reg [N*ACC_WIDTH-1:0] psum_in_d;
     
     reg [N*ACC_WIDTH-1:0] pbuf_rdata;
+    reg [N*ACC_WIDTH-1:0] next_psum;
 
     integer i;
 
@@ -75,8 +74,6 @@ module accumulator_pbuf #(
             
             // Stage 2: Accumulate and Writeback / Output
             if (valid_in_d) begin
-                reg [N*ACC_WIDTH-1:0] next_psum;
-                
                 for (i = 0; i < N; i = i + 1) begin
                     reg signed [ACC_WIDTH-1:0] p_in;
                     reg signed [ACC_WIDTH-1:0] p_mem;
@@ -94,14 +91,18 @@ module accumulator_pbuf #(
                     next_psum[i*ACC_WIDTH +: ACC_WIDTH] = p_sum;
                 end
                 
-                // If it's not the final pass, write back to PBUF
-                if (!finish_pass_d) begin
-                    pbuf_mem[pbuf_addr_d] <= next_psum;
-                end else begin
-                    // If it is the final pass, send it down the pipeline
+                // If it is the final pass, send it down the pipeline
+                if (finish_pass_d) begin
                     valid_out <= 1;
                     psum_out <= next_psum;
                 end
+            end
+            
+            // Memory writes
+            if (cpu_we) begin
+                pbuf_mem[cpu_addr] <= cpu_wdata;
+            end else if (valid_in_d && !finish_pass_d) begin
+                pbuf_mem[pbuf_addr_d] <= next_psum;
             end
         end
     end

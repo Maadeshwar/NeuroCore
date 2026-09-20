@@ -1,3 +1,5 @@
+/* verilator lint_off CASEINCOMPLETE */
+/* verilator lint_off UNUSEDPARAM */
 `default_nettype none
 
 module layer_controller #(
@@ -143,7 +145,7 @@ module layer_controller #(
                             tile_limit <= cmd_data[15:0];
                         end else if (cmd_data[31:28] == OP_LOAD_WEIGHTS) begin
                             npu_start_load <= 1;
-                            counter <= cmd_data[27:0];
+                            counter <= cmd_data[25:0];
                         end else if (cmd_data[31:28] == OP_RUN_MAC) begin
                             mac_delay_sr[0] <= 1'b1;
                             accum_en <= cmd_data[27];
