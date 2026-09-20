@@ -1,10 +1,11 @@
 ﻿<h1 align="center">NeuroCore SoC</h1>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Architecture-RISC--V_SoC-007ACC?style=for-the-badge" alt="RISC-V">
-  <img src="https://img.shields.io/badge/Accelerator-16x16_NPU-FF3366?style=for-the-badge" alt="Accelerator">
-  <img src="https://img.shields.io/badge/Language-Verilog_2001-4B32C3?style=for-the-badge" alt="Verilog">
-  <img src="https://img.shields.io/badge/Status-Production_Grade-00C853?style=for-the-badge" alt="Status">
+  <img src="https://img.shields.io/badge/Processor-RISC--V_Core-007ACC?style=for-the-badge" alt="RISC-V">
+  <img src="https://img.shields.io/badge/Accelerator-Systolic_NPU-FF3366?style=for-the-badge" alt="Accelerator">
+  <img src="https://img.shields.io/badge/Topology-16x16_Matrix_Engine-9C27B0?style=for-the-badge" alt="Matrix">
+  <img src="https://img.shields.io/badge/Data_Path-Hardware_DMA-4B32C3?style=for-the-badge" alt="DMA">
+  <img src="https://img.shields.io/badge/Memory-Zero--Protocol_SRAM-00C853?style=for-the-badge" alt="SRAM">
 </p>
 
 ---
