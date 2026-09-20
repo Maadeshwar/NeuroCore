@@ -3,7 +3,6 @@
 <p align="center">
   <img src="https://img.shields.io/badge/Architecture-RISC--V_SoC-007ACC?style=for-the-badge" alt="RISC-V">
   <img src="https://img.shields.io/badge/Accelerator-16x16_NPU-FF3366?style=for-the-badge" alt="Accelerator">
-  <img src="https://img.shields.io/badge/Control-3_Stage_FSM-FF9900?style=for-the-badge" alt="FSM">
   <img src="https://img.shields.io/badge/Language-Verilog_2001-4B32C3?style=for-the-badge" alt="Verilog">
   <img src="https://img.shields.io/badge/Status-Production_Grade-00C853?style=for-the-badge" alt="Status">
 </p>
@@ -31,17 +30,16 @@ The NPU memory modules (IBUF, WBUF, PBUF, OBUF) are directly memory-mapped into 
 1. **DMA Streaming:** The RISC-V CPU configures the internal Direct Memory Access (DMA) controller to rapidly stream flattened input images (Activations) and convolutional kernels (Weights) from Main DRAM directly into the NPU's localized SRAM buffers.
 2. **Command Dispatch:** The CPU pushes a precise 32-bit execution command packet (e.g., OP_RUN_MAC) into the NPU's asynchronous Command FIFO, releasing the CPU to perform other operations.
 3. **Autonomous Execution:** The NPU's 3-Stage FSM detects the command, wakes from the IDLE state, and autonomously drives the physical matrix math.
-4. **Hardware Interrupt:** Upon completion of the matrix block and post-processing, the FSM raises a hardware interrupt (
-pu_ready) back to the RISC-V processor, signaling that the output tensor is ready to be fetched from the OBUF.
+4. **Hardware Interrupt:** Upon completion of the matrix block and post-processing, the FSM raises a hardware interrupt (npu_ready) back to the RISC-V processor, signaling that the output tensor is ready to be fetched from the OBUF.
 
 ---
 
 <h2 align="center">End-to-End Verification</h2>
 
-NeuroCore includes an exhaustive SoC-level verification suite. The environment simulates the RISC-V processor executing a bare-metal C firmware payload (irmware.c) that rigorously validates the hardware logic.
+NeuroCore includes an exhaustive SoC-level verification suite. The environment simulates the RISC-V processor executing a bare-metal C firmware payload (firmware.c) that rigorously validates the hardware logic.
 
 <h3 align="center">Firmware Validation Routine</h3>
-* The C compiler generates irmware.hex containing the RISC-V machine instructions.
+* The C compiler generates firmware.hex containing the RISC-V machine instructions.
 * The firmware dynamically manages the DMA controller to push exact 16x16 matrices into the NPU.
 * It dispatches execution commands via the Memory-Mapped FIFO to test all internal paths.
 * It explicitly asserts that the hardware returns mathematically identical results for:
