@@ -55,57 +55,56 @@ int main(void) {
     // 1. Data arrays in DMEM (Assuming testbench preloads these, but we can write them)
     // For verification, we just write a tiny test case manually into DMEM.
     
-    // N = 16. DATA_WIDTH = 8. Word = 32 bits = 4 elements.
-    // 16 elements = 4 words.
+    // N = 8. DATA_WIDTH = 8. Word = 32 bits = 4 elements.
+    // 8 elements = 2 words.
     // Let's create an identity-like weight matrix and a simple activation matrix.
     
     volatile uint32_t* dmem = (volatile uint32_t*)DMEM_BASE;
     
-    // Setup weights (16x16) -> 16 rows. Each row is 16 bytes = 4 words.
+    // Setup weights (8x8) -> 8 rows. Each row is 8 bytes = 2 words.
     // We will make a diagonal matrix (identity)
     uint32_t w_start = DMEM_BASE + 0x000;
-    for (int r = 0; r < 16; r++) {
-        for (int c = 0; c < 4; c++) {
+    for (int r = 0; r < 8; r++) {
+        for (int c = 0; c < 2; c++) {
             uint32_t val = 0;
             for (int b = 0; b < 4; b++) {
                 int col_idx = c * 4 + b;
                 if (col_idx == r) val |= (1 << (b * 8));
             }
-            dmem[(0x000/4) + r*4 + c] = val;
+            dmem[(0x000/4) + r*2 + c] = val;
         }
     }
     
-    // Setup activations (16x16) -> 16 rows.
+    // Setup activations (8x8) -> 8 rows.
     uint32_t a_start = DMEM_BASE + 0x200;
-    for (int r = 0; r < 16; r++) {
-        for (int c = 0; c < 4; c++) {
+    for (int r = 0; r < 8; r++) {
+        for (int c = 0; c < 2; c++) {
             uint32_t val = 0;
             for (int b = 0; b < 4; b++) {
                 uint8_t act_val = r + 1; // Just some pattern
                 val |= (act_val << (b * 8));
             }
-            dmem[(0x200/4) + r*4 + c] = val;
+            dmem[(0x200/4) + r*2 + c] = val;
         }
     }
     
     // 2. Use DMA to copy to IBUF and WBUF
-    dma_copy(w_start, WBUF_BASE, 16 * 4);
-    dma_copy(a_start, IBUF_BASE, 16 * 4);
+    dma_copy(w_start, WBUF_BASE, 16); // 8 rows * 2 words = 16 words
+    dma_copy(a_start, IBUF_BASE, 16);
     
     // 3. Configure NPU Config (No Quantization shift, No ReLU, No Pool for this basic test)
     // quant_shift = 0, relu = 0, pool = 0
-    *NPU_CFG = 0x00;
+    *NPU_CFG = 0x00000000;
     
-    // 4. Send Commands to NPU
-    // Load 16 rows of weights
-    *NPU_CMD_FIFO = build_cmd(OP_LOAD_WEIGHTS, 16);
+    // Load 8 rows of weights
+    *NPU_CMD_FIFO = build_cmd(OP_LOAD_WEIGHTS, 8);
     
     // Set Tiler to 0 (1 tile)
     *NPU_CMD_FIFO = build_cmd(OP_SET_TILER, 0);
     
-    // Run MAC for 16 rows (Finish pass = 1, Accum En = 0)
+    // Run MAC for 8 rows (Finish pass = 1, Accum En = 0)
     // Payload for OP_RUN_MAC: [27] accum_en, [26] finish_pass, [25:0] mac_cycles
-    uint32_t run_payload = (0 << 27) | (1 << 26) | 16;
+    uint32_t run_payload = (0 << 27) | (1 << 26) | 8;
     *NPU_CMD_FIFO = build_cmd(OP_RUN_MAC, run_payload);
     
     // Wait for NPU Interrupt (We don't have an ISR setup in this bare-metal C, 
