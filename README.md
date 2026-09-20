@@ -26,7 +26,7 @@ flowchart LR
     subgraph Accelerator [16x16 NPU Subsystem]
         FIFO[Command FIFO]
         SRAM[(Localized<br>SRAMs)]
-        FSM{3-Stage FSM}
+        FSM{3-State FSM}
         SYS[16x16 Systolic Array]
     end
 
